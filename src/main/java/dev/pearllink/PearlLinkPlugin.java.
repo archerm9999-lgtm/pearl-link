@@ -1,1 +1,156 @@
+package dev.pearllink;
+
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.World;
+import org.bukkit.entity.EnderPearl;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.projectiles.ProjectileSource;
+
+import java.util.UUID;
+
+public final class PearlLinkPlugin extends JavaPlugin implements Listener {
+    private NamespacedKey pearlIdKey;
+    private NamespacedKey worldIdKey;
+    private NamespacedKey throwerIdKey;
+
+    @Override
+    public void onEnable() {
+        pearlIdKey = new NamespacedKey(this, "pearl_uuid");
+        worldIdKey = new NamespacedKey(this, "pearl_world");
+        throwerIdKey = new NamespacedKey(this, "thrower_uuid");
+        Bukkit.getPluginManager().registerEvents(this, this);
+        getLogger().info("PearlLink enabled. Sneak-right-click a thrown pearl with a fishing rod to pair it.");
+    }
+
+    /*
+     * Pair to the exact entity the player clicked. No radius search and no
+     * Better Stasis-style nearby-pearl scan is performed here.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onPearlClick(PlayerInteractEntityEvent event) {
+        Player player = event.getPlayer();
+
+        if (event.getHand() != EquipmentSlot.HAND) return;
+        if (!player.isSneaking()) return;
+        if (player.getInventory().getItemInMainHand().getType() != Material.FISHING_ROD) return;
+        if (!(event.getRightClicked() instanceof EnderPearl pearl)) return;
+
+        ProjectileSource source = pearl.getShooter();
+        if (!(source instanceof Player originalThrower)) {
+            player.sendMessage("§cPearlLink: this pearl was not thrown by a player.");
+            event.setCancelled(true);
+            return;
+        }
+
+        ItemStack rod = player.getInventory().getItemInMainHand();
+        ItemMeta meta = rod.getItemMeta();
+        if (meta == null) return;
+
+        meta.getPersistentDataContainer().set(pearlIdKey, PersistentDataType.STRING,
+                pearl.getUniqueId().toString());
+        meta.getPersistentDataContainer().set(worldIdKey, PersistentDataType.STRING,
+                pearl.getWorld().getUID().toString());
+        meta.getPersistentDataContainer().set(throwerIdKey, PersistentDataType.STRING,
+                originalThrower.getUniqueId().toString());
+        rod.setItemMeta(meta);
+
+        player.sendMessage("§aPearlLink: rod paired to " + originalThrower.getName() + "'s pearl.");
+        event.setCancelled(true);
+    }
+
+    /*
+     * Activate the saved pearl with a normal right-click in air or on a block.
+     * The original thrower is teleported; the rod holder can be a different player.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onRodUse(PlayerInteractEvent event) {
+        if (event.getHand() != EquipmentSlot.HAND) return;
+        Action action = event.getAction();
+        if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK) return;
+
+        Player activator = event.getPlayer();
+        ItemStack rod = activator.getInventory().getItemInMainHand();
+        if (rod.getType() != Material.FISHING_ROD || !hasLink(rod)) return;
+
+        // A linked rod's right-click is reserved for PearlLink, not the normal rod cast.
+        event.setCancelled(true);
+
+        ItemMeta meta = rod.getItemMeta();
+        String pearlText = meta.getPersistentDataContainer().get(pearlIdKey, PersistentDataType.STRING);
+        String worldText = meta.getPersistentDataContainer().get(worldIdKey, PersistentDataType.STRING);
+        String throwerText = meta.getPersistentDataContainer().get(throwerIdKey, PersistentDataType.STRING);
+
+        try {
+            UUID pearlId = UUID.fromString(pearlText);
+            UUID worldId = UUID.fromString(worldText);
+            UUID throwerId = UUID.fromString(throwerText);
+
+            World world = Bukkit.getWorld(worldId);
+            if (world == null) {
+                activator.sendMessage("§cPearlLink: the pearl's world is unavailable.");
+                return;
+            }
+
+            Entity found = world.getEntity(pearlId);
+            if (!(found instanceof EnderPearl pearl) || !pearl.isValid()) {
+                activator.sendMessage("§cPearlLink: that pearl is not loaded or no longer exists.");
+                return;
+            }
+
+            Player originalThrower = Bukkit.getPlayer(throwerId);
+            if (originalThrower == null || !originalThrower.isOnline()) {
+                activator.sendMessage("§cPearlLink: the original thrower must be online to receive the teleport.");
+                return;
+            }
+
+            if (!originalThrower.getWorld().equals(world)) {
+                activator.sendMessage("§cPearlLink: the original thrower must be in the pearl's dimension.");
+                return;
+            }
+
+            Location destination = pearl.getLocation().clone();
+            // Remove first so a second activation cannot reuse the same pearl.
+            pearl.remove();
+            originalThrower.teleport(destination);
+
+            clearLink(rod);
+            activator.sendMessage("§aPearlLink: activated! " + originalThrower.getName() + " was teleported.");
+        } catch (IllegalArgumentException ex) {
+            activator.sendMessage("§cPearlLink: saved link data is invalid. Sneak-right-click a pearl to relink.");
+            clearLink(rod);
+        }
+    }
+
+    private boolean hasLink(ItemStack item) {
+        if (item.getItemMeta() == null) return false;
+        var pdc = item.getItemMeta().getPersistentDataContainer();
+        return pdc.has(pearlIdKey, PersistentDataType.STRING)
+                && pdc.has(worldIdKey, PersistentDataType.STRING)
+                && pdc.has(throwerIdKey, PersistentDataType.STRING);
+    }
+
+    private void clearLink(ItemStack rod) {
+        ItemMeta meta = rod.getItemMeta();
+        if (meta == null) return;
+        meta.getPersistentDataContainer().remove(pearlIdKey);
+        meta.getPersistentDataContainer().remove(worldIdKey);
+        meta.getPersistentDataContainer().remove(throwerIdKey);
+        rod.setItemMeta(meta);
+    }
+}
 
