@@ -1,7 +1,5 @@
 name: PearlLink
-version: 1.0.0
+version: 1.1.0
 main: dev.pearllink.PearlLinkPlugin
 api-version: '1.21.11'
-description: Pair a fishing rod to one exact ender pearl and activate it remotely.
-author: potato_lord8916
-
+description: Link fishing rods to ender pearls
