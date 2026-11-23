@@ -21,4 +21,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pearl-link
-          path: target/pearl-link-1.0.0.jar
+          path: target/pearl-link-*.jar
