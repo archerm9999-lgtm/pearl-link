@@ -7,6 +7,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabExecutor;
@@ -45,7 +46,7 @@ import java.util.function.Predicate;
  *              player who threw the pearl is the one who gets teleported.
  *
  * Orbital Rod: sneak + right-click while aiming at a player to select them.
- *              Right-click to pull. The selected player is teleported to YOU (the holder).
+ *              Right-click to pull. Their pearl is pulled to YOU and they teleport to you.
  */
 public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabExecutor {
 
@@ -211,7 +212,7 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
             pdc.set(targetKey, PersistentDataType.STRING, target.getUniqueId().toString());
             pdc.set(targetNameKey, PersistentDataType.STRING, target.getName());
         });
-        msg(player, "Selected " + target.getName() + ". Right-click to pull them to you.", NamedTextColor.GREEN);
+        msg(player, "Selected " + target.getName() + ". Right-click to pull their pearl to you.", NamedTextColor.GREEN);
     }
 
     private void pullWithOrbitalRod(Player activator, ItemStack rod) {
@@ -240,7 +241,22 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
             return;
         }
 
-        // Pull the selected player to whoever is holding the rod.
+        EnderPearl pearl = findPearlOf(target);
+        if (pearl == null) {
+            int total = 0;
+            int unknownOwner = 0;
+            for (World world : Bukkit.getWorlds()) {
+                for (EnderPearl any : world.getEntitiesByClass(EnderPearl.class)) {
+                    total++;
+                    if (ownerOf(any) == null) unknownOwner++;
+                }
+            }
+            msg(activator, target.getName() + " has no loaded ender pearl. (Loaded pearls on the server: "
+                    + total + ", with unknown owner: " + unknownOwner + ")", NamedTextColor.RED);
+            return;
+        }
+
+        // Pull their pearl to the rod holder: the pearl is used up and they land on you.
         Location destination = activator.getLocation().clone();
         Location current = target.getLocation();
         destination.setYaw(current.getYaw());
@@ -250,8 +266,26 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
             msg(activator, "The teleport was blocked.", NamedTextColor.RED);
             return;
         }
-        msg(activator, "Pulled " + target.getName() + " to you.", NamedTextColor.GREEN);
-        msg(target, activator.getName() + " pulled you to them.", NamedTextColor.YELLOW);
+        pearl.remove();
+
+        msg(activator, "Pulled " + target.getName() + "'s pearl to you. They teleported to you.", NamedTextColor.GREEN);
+        msg(target, activator.getName() + " pulled your pearl. You were teleported to them.", NamedTextColor.YELLOW);
+    }
+
+    /** The newest loaded pearl thrown by this player, in any world. */
+    private EnderPearl findPearlOf(Player owner) {
+        EnderPearl best = null;
+        for (World world : Bukkit.getWorlds()) {
+            for (EnderPearl candidate : world.getEntitiesByClass(EnderPearl.class)) {
+                if (!candidate.isValid()) continue;
+                UUID candidateOwner = ownerOf(candidate);
+                if (candidateOwner == null || !candidateOwner.equals(owner.getUniqueId())) continue;
+                if (best == null || candidate.getTicksLived() < best.getTicksLived()) {
+                    best = candidate;
+                }
+            }
+        }
+        return best;
     }
 
     // ---- Shared ----
@@ -340,7 +374,7 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
             String name = pdc.get(targetNameKey, PersistentDataType.STRING);
             lore.add(plain(name == null ? "No player selected" : "Target: " + name, NamedTextColor.WHITE));
             lore.add(plain("Sneak + right-click a player to select", NamedTextColor.GRAY));
-            lore.add(plain("Right-click to pull them to you", NamedTextColor.GRAY));
+            lore.add(plain("Right-click to pull their pearl to you", NamedTextColor.GRAY));
         } else {
             meta.displayName(plain("Pearl Rod", NamedTextColor.AQUA));
             boolean linked = pdc.has(pearlKey, PersistentDataType.STRING);
