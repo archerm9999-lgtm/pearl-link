@@ -45,7 +45,7 @@ import java.util.function.Predicate;
  *              player who threw the pearl is the one who gets teleported.
  *
  * Orbital Rod: sneak + right-click while aiming at a player to select them.
- *              Right-click to pull. The selected player is teleported to their own pearl.
+ *              Right-click to pull. The selected player is teleported to YOU (the holder).
  */
 public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabExecutor {
 
@@ -211,7 +211,7 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
             pdc.set(targetKey, PersistentDataType.STRING, target.getUniqueId().toString());
             pdc.set(targetNameKey, PersistentDataType.STRING, target.getName());
         });
-        msg(player, "Selected " + target.getName() + ". Right-click to pull their pearl.", NamedTextColor.GREEN);
+        msg(player, "Selected " + target.getName() + ". Right-click to pull them to you.", NamedTextColor.GREEN);
     }
 
     private void pullWithOrbitalRod(Player activator, ItemStack rod) {
@@ -235,28 +235,23 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
             msg(activator, "The selected player is offline.", NamedTextColor.RED);
             return;
         }
-
-        EnderPearl pearl = findPearlOf(target);
-        if (pearl == null) {
-            msg(activator, target.getName() + " has no loaded ender pearl in their world.", NamedTextColor.RED);
+        if (target.getUniqueId().equals(activator.getUniqueId())) {
+            msg(activator, "The selected player is you. Sneak + right-click someone else.", NamedTextColor.YELLOW);
             return;
         }
 
-        pullPlayerToPearl(activator, target, pearl);
-    }
+        // Pull the selected player to whoever is holding the rod.
+        Location destination = activator.getLocation().clone();
+        Location current = target.getLocation();
+        destination.setYaw(current.getYaw());
+        destination.setPitch(current.getPitch());
 
-    /** The newest loaded pearl thrown by this player, in the world they are currently in. */
-    private EnderPearl findPearlOf(Player owner) {
-        EnderPearl best = null;
-        for (EnderPearl candidate : owner.getWorld().getEntitiesByClass(EnderPearl.class)) {
-            if (!candidate.isValid()) continue;
-            UUID candidateOwner = ownerOf(candidate);
-            if (candidateOwner == null || !candidateOwner.equals(owner.getUniqueId())) continue;
-            if (best == null || candidate.getTicksLived() < best.getTicksLived()) {
-                best = candidate;
-            }
+        if (!target.teleport(destination)) {
+            msg(activator, "The teleport was blocked.", NamedTextColor.RED);
+            return;
         }
-        return best;
+        msg(activator, "Pulled " + target.getName() + " to you.", NamedTextColor.GREEN);
+        msg(target, activator.getName() + " pulled you to them.", NamedTextColor.YELLOW);
     }
 
     // ---- Shared ----
@@ -288,7 +283,15 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
         return true;
     }
 
+    /**
+     * Who threw this pearl. The saved owner UUID is checked first because getShooter()
+     * can be empty for pearls that were reloaded after a restart or chunk unload.
+     */
     private UUID ownerOf(EnderPearl pearl) {
+        UUID id = pearl.getOwnerUniqueId();
+        if (id != null) {
+            return id;
+        }
         ProjectileSource source = pearl.getShooter();
         if (source instanceof Player shooter) {
             return shooter.getUniqueId();
@@ -337,7 +340,7 @@ public final class PearlLinkPlugin extends JavaPlugin implements Listener, TabEx
             String name = pdc.get(targetNameKey, PersistentDataType.STRING);
             lore.add(plain(name == null ? "No player selected" : "Target: " + name, NamedTextColor.WHITE));
             lore.add(plain("Sneak + right-click a player to select", NamedTextColor.GRAY));
-            lore.add(plain("Right-click to pull their pearl", NamedTextColor.GRAY));
+            lore.add(plain("Right-click to pull them to you", NamedTextColor.GRAY));
         } else {
             meta.displayName(plain("Pearl Rod", NamedTextColor.AQUA));
             boolean linked = pdc.has(pearlKey, PersistentDataType.STRING);
